@@ -73,7 +73,7 @@ fn main() {
 
     let input = Path::new(matches.value_of("INPUT").unwrap());
     let target = Path::new(matches.value_of("TARGET").unwrap());
-    let number = usize::from_str_radix(matches.value_of("numer").unwrap(), 10).unwrap();
+    let number = usize::from_str_radix(matches.value_of("number").unwrap(), 10).unwrap();
 
     vandalize(input, target, number);
 }
