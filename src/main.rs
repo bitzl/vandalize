@@ -1,4 +1,5 @@
 use clap::{App, AppSettings, Arg};
+use indicatif::{ProgressBar, ProgressStyle};
 use rand::{thread_rng, Rng};
 use std::fs;
 use std::fs::File;
@@ -6,53 +7,42 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 fn main() {
-    let input_arg = Arg::with_name("INPUT")
-        .help("The file to create vandalized copies from.")
-        .takes_value(true)
-        .required(true);
-    let target_arg = Arg::with_name("TARGET")
-        .help("The directory to put the vandalized copies.")
-        .takes_value(true)
-        .required(true);
-
-    let matches = App::new("prometheus-sd")
+    let matches = App::new("Vandalize!")
         .author("Marcus Bitzl <marcus@bitzl.io>")
         .about("Randomize bytes in files")
         .settings(&[AppSettings::ArgRequiredElseHelp, AppSettings::ColoredHelp])
         .subcommand(
             App::new("random")
-                .help("randomize random bytes")
-                .arg(input_arg.clone())
-                .arg(target_arg.clone())
+                .about("randomize random bytes")
+                .arg_from_usage("<input> 'The file to create vandalized copies from.'")
+                .arg_from_usage("<output> 'The directory to put the vandalized copies.'")
                 .arg(
-                    Arg::with_name("number")
-                        .help("Number of vandalized copies to create.")
-                        .short("-n")
-                        .long("--number")
-                        .default_value("1")
-                        .required(true),
+                    Arg::from_usage("-n, --number 'Number of vandalized copies to create.'")
+                        .default_value("1"),
                 ),
         )
         .subcommand(
             App::new("every")
-                .help("creates a randomized copy for every byte")
-                .arg(input_arg.clone())
-                .arg(target_arg.clone()),
+                .about("creates a randomized copy for every byte")
+                .arg_from_usage("<input> 'The file to create vandalized copies from.'")
+                .arg_from_usage("<output> 'The directory to put the vandalized copies.'"),
         )
         .get_matches();
 
     let input = Path::new(matches.value_of("INPUT").unwrap());
+
+    let source = Source::new(input);
+
     let target = Path::new(matches.value_of("TARGET").unwrap());
     let number = usize::from_str_radix(matches.value_of("number").unwrap(), 10).unwrap();
 
     match matches.subcommand_name() {
-    Some("random") => vandalize(input, target, number),
-    Some("every") => every(input, target),
-    Some(other) => println!("Unknown subcommand {}", other),
-    None => println!("Must provide subcommand")
+        Some("random") => vandalize(input, target, number),
+        Some("every") => every(&source, target),
+        Some(other) => println!("Unknown subcommand {}", other),
+        None => println!("Must provide subcommand"),
     }
 }
-
 
 fn vandalize(input: &Path, target_dir: &Path, copies: usize) {
     let data = fs::read(input).unwrap();
@@ -82,22 +72,54 @@ fn vandalize_data<W: Write>(data: &[u8], bytes_to_break: usize, buffer: &mut W) 
     vandalize_bytes(data, &random_byte_indices, buffer);
 }
 
+struct Source {
+    base_name: String,
+    extension: String,
+    data: Vec<u8>,
+}
 
-fn every(input: &Path, target_dir: &Path) {
-    let data = fs::read(input).unwrap();
+impl Source {
+    fn new(path: &Path) -> Source {
+        let base_name: String = path.file_stem().unwrap().to_str().unwrap().to_owned();
+        let extension: String = path.extension().unwrap().to_str().unwrap().to_owned();
+        let data = fs::read(path).unwrap();
+        Source {
+            base_name,
+            extension,
+            data,
+        }
+    }
 
-    let base_name = input.file_stem().unwrap().to_str().unwrap();
-    let extension = input.extension().unwrap().to_str().unwrap();
-    let width = data.len().to_string().len();
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+}
 
-    for i in 0..data.len() {
-        let filename = format!("{}_v{:0width$}.{}", base_name, i, extension, width = width);
+fn every(source: &Source, target_dir: &Path) {
+    let total = source.len();
+    let digits = total.to_string().len();
+
+    let pb = ProgressBar::new(total as u64);
+    pb.set_style(ProgressStyle::default_bar().template(
+        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({per_sec} | {eta})",
+    ));
+
+    for i in 0..total {
+        let filename = format!(
+            "{}_v{:0digits$}.{}",
+            source.base_name,
+            i,
+            source.extension,
+            digits = digits
+        );
         let target = target_dir.join(filename);
 
         let mut writer: BufWriter<_> = BufWriter::new(File::create(target).unwrap());
 
-        vandalize_bytes(&data, &vec![i], &mut writer);
+        vandalize_bytes(&source.data, &vec![i], &mut writer);
+        pb.tick();
     }
+    pb.finish();
 }
 
 fn vandalize_bytes<W: Write>(data: &[u8], indices: &[usize], buffer: &mut W) {
